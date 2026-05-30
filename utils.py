@@ -1,145 +1,55 @@
-import json
 import os
 import torch
 import random
-import xml.etree.ElementTree as ET
 import torchvision.transforms.functional as FT
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Label map
-voc_labels = ('aeroplane', 'bicycle', 'bird', 'boat', 'bottle', 'bus', 'car', 'cat', 'chair', 'cow', 'diningtable',
-              'dog', 'horse', 'motorbike', 'person', 'pottedplant', 'sheep', 'sofa', 'train', 'tvmonitor')
-label_map = {k: v + 1 for v, k in enumerate(voc_labels)}
-label_map['background'] = 0
-rev_label_map = {v: k for k, v in label_map.items()}  # Inverse mapping
+# LVIS Greedy-50 label map
+# 50 classes selected from LVIS, sorted by COCO category ID
+# Sequential label IDs: background=0, classes=1..50
+lvis_labels = (
+    'airplane', 'suitcase', 'banana', 'baseball_bat', 'baseball_glove',
+    'bed', 'cow', 'bench', 'bird', 'boat',
+    'bowl', 'broccoli', 'bus_(vehicle)', 'cat', 'cellular_telephone',
+    'clock', 'computer_keyboard', 'dog', 'doughnut', 'drawer',
+    'elephant', 'faucet', 'fireplug', 'fork', 'frisbee',
+    'giraffe', 'horse', 'kite', 'motorcycle', 'necktie',
+    'pizza', 'plate', 'sheep', 'skateboard', 'ski_pole',
+    'snowboard', 'sofa', 'spectacles', 'street_sign', 'surfboard',
+    'teddy_bear', 'television_set', 'tennis_racket', 'toilet', 'traffic_light',
+    'train_(railroad_vehicle)', 'umbrella', 'vase', 'windshield_wiper', 'zebra',
+)
 
-# Color map for bounding boxes of detected objects from https://sashat.me/2017/01/11/list-of-20-simple-distinct-colors/
-distinct_colors = ['#e6194b', '#3cb44b', '#ffe119', '#0082c8', '#f58231', '#911eb4', '#46f0f0', '#f032e6',
-                   '#d2f53c', '#fabebe', '#008080', '#000080', '#aa6e28', '#fffac8', '#800000', '#aaffc3', '#808000',
-                   '#ffd8b1', '#e6beff', '#808080', '#FFFFFF']
+label_map = {name: idx + 1 for idx, name in enumerate(lvis_labels)}
+label_map['background'] = 0
+rev_label_map = {v: k for k, v in label_map.items()}
+
+# Maps original COCO category IDs → sequential label IDs (1-50)
+coco_id_to_label = {
+    3: 1, 36: 2, 45: 3, 58: 4, 60: 5, 77: 6, 80: 7, 90: 8, 99: 9, 118: 10,
+    139: 11, 154: 12, 173: 13, 225: 14, 230: 15, 271: 16, 296: 17, 378: 18,
+    387: 19, 390: 20, 422: 21, 430: 22, 445: 23, 469: 24, 474: 25, 496: 26,
+    569: 27, 611: 28, 703: 29, 716: 30, 816: 31, 818: 32, 943: 33, 962: 34,
+    967: 35, 976: 36, 982: 37, 995: 38, 1026: 39, 1037: 40, 1071: 41,
+    1077: 42, 1079: 43, 1097: 44, 1112: 45, 1115: 46, 1133: 47, 1139: 48,
+    1186: 49, 1202: 50,
+}
+
+# 51 distinct colors for visualization (index 0 = background)
+distinct_colors = [
+    '#FFFFFF', '#e6194b', '#3cb44b', '#ffe119', '#0082c8', '#f58231',
+    '#911eb4', '#46f0f0', '#f032e6', '#d2f53c', '#fabebe', '#008080',
+    '#000080', '#aa6e28', '#fffac8', '#800000', '#aaffc3', '#808000',
+    '#ffd8b1', '#e6beff', '#808080', '#9a6324', '#469990', '#dcbeff',
+    '#42d4f4', '#bfef45', '#fabed4', '#aaffc3', '#ffd8b1', '#fffac8',
+    '#4363d8', '#f58231', '#911eb4', '#42d4f4', '#f032e6', '#bfef45',
+    '#fabed4', '#469990', '#dcbeff', '#9a6324', '#800000', '#808000',
+    '#000075', '#a9a9a9', '#ffffff', '#e6194b', '#3cb44b', '#ffe119',
+    '#0082c8', '#f58231', '#911eb4',
+]
 label_color_map = {k: distinct_colors[i] for i, k in enumerate(label_map.keys())}
 
-
-def parse_annotation(annotation_path):
-    tree = ET.parse(annotation_path)
-    root = tree.getroot()
-
-    boxes = list()
-    labels = list()
-    difficulties = list()
-    for object in root.iter('object'):
-
-        difficult = int(object.find('difficult').text == '1')
-
-        label = object.find('name').text.lower().strip()
-        if label not in label_map:
-            continue
-
-        bbox = object.find('bndbox')
-        xmin = int(bbox.find('xmin').text) - 1
-        ymin = int(bbox.find('ymin').text) - 1
-        xmax = int(bbox.find('xmax').text) - 1
-        ymax = int(bbox.find('ymax').text) - 1
-
-        boxes.append([xmin, ymin, xmax, ymax])
-        labels.append(label_map[label])
-        difficulties.append(difficult)
-
-    return {'boxes': boxes, 'labels': labels, 'difficulties': difficulties}
-
-
-def create_data_lists(voc07_path, voc12_path, output_folder):
-    """
-    Create lists of images, the bounding boxes and labels of the objects in these images, and save these to file.
-
-    :param voc07_path: path to the 'VOC2007' folder
-    :param voc12_path: path to the 'VOC2012' folder
-    :param output_folder: folder where the JSONs must be saved
-    """
-    voc07_path = os.path.abspath(voc07_path)
-    voc12_path = os.path.abspath(voc12_path)
-
-    train_images = list()
-    train_objects = list()
-    n_objects = 0
-
-    # Training data
-    for path in [voc07_path, voc12_path]:
-
-        # Find IDs of images in training data
-        with open(os.path.join(path, 'ImageSets/Main/trainval.txt')) as f:
-            ids = f.read().splitlines()
-
-        for id in ids:
-            # Parse annotation's XML file
-            objects = parse_annotation(os.path.join(path, 'Annotations', id + '.xml'))
-            if len(objects['boxes']) == 0:
-                continue
-            n_objects += len(objects)
-            train_objects.append(objects)
-            train_images.append(os.path.join(path, 'JPEGImages', id + '.jpg'))
-
-    assert len(train_objects) == len(train_images)
-
-    # Save to file
-    with open(os.path.join(output_folder, 'TRAIN_images.json'), 'w') as j:
-        json.dump(train_images, j)
-    with open(os.path.join(output_folder, 'TRAIN_objects.json'), 'w') as j:
-        json.dump(train_objects, j)
-    with open(os.path.join(output_folder, 'label_map.json'), 'w') as j:
-        json.dump(label_map, j)  # save label map too
-
-    print('\nThere are %d training images containing a total of %d objects. Files have been saved to %s.' % (
-        len(train_images), n_objects, os.path.abspath(output_folder)))
-
-    # Test data
-    test_images = list()
-    test_objects = list()
-    n_objects = 0
-
-    # Find IDs of images in the test data
-    with open(os.path.join(voc07_path, 'ImageSets/Main/test.txt')) as f:
-        ids = f.read().splitlines()
-
-    for id in ids:
-        # Parse annotation's XML file
-        objects = parse_annotation(os.path.join(voc07_path, 'Annotations', id + '.xml'))
-        if len(objects) == 0:
-            continue
-        test_objects.append(objects)
-        n_objects += len(objects)
-        test_images.append(os.path.join(voc07_path, 'JPEGImages', id + '.jpg'))
-
-    assert len(test_objects) == len(test_images)
-
-    # Save to file
-    with open(os.path.join(output_folder, 'TEST_images.json'), 'w') as j:
-        json.dump(test_images, j)
-    with open(os.path.join(output_folder, 'TEST_objects.json'), 'w') as j:
-        json.dump(test_objects, j)
-
-    print('\nThere are %d test images containing a total of %d objects. Files have been saved to %s.' % (
-        len(test_images), n_objects, os.path.abspath(output_folder)))
-
-
-def decimate(tensor, m):
-    """
-    Decimate a tensor by a factor 'm', i.e. downsample by keeping every 'm'th value.
-
-    This is used when we convert FC layers to equivalent Convolutional layers, BUT of a smaller size.
-
-    :param tensor: tensor to be decimated
-    :param m: list of decimation factors for each dimension of the tensor; None if not to be decimated along a dimension
-    :return: decimated tensor
-    """
-    assert tensor.dim() == len(m)
-    for d in range(tensor.dim()):
-        if m[d] is not None:
-            tensor = tensor.index_select(dim=d,
-                                         index=torch.arange(start=0, end=tensor.size(d), step=m[d]).long())
-
-    return tensor
 
 
 def calculate_mAP(det_boxes, det_labels, det_scores, true_boxes, true_labels, true_difficulties):
@@ -567,7 +477,7 @@ def photometric_distort(image):
 
     for d in distortions:
         if random.random() < 0.5:
-            if d.__name__ is 'adjust_hue':
+            if d.__name__ == 'adjust_hue':
                 # Caffe repo uses a 'hue_delta' of 18 - we divide by 255 because PyTorch needs a normalized value
                 adjust_factor = random.uniform(-18 / 255., 18 / 255.)
             else:
@@ -593,8 +503,7 @@ def transform(image, boxes, labels, difficulties, split):
     """
     assert split in {'TRAIN', 'TEST'}
 
-    # Mean and standard deviation of ImageNet data that our base VGG from torchvision was trained on
-    # see: https://pytorch.org/docs/stable/torchvision/models.html
+    # Mean and standard deviation of ImageNet data (used as standard normalization for ResNet50 trained from scratch)
     mean = [0.485, 0.456, 0.406]
     std = [0.229, 0.224, 0.225]
 
@@ -650,35 +559,22 @@ def adjust_learning_rate(optimizer, scale):
     print("DECAYING learning rate.\n The new LR is %f\n" % (optimizer.param_groups[1]['lr'],))
 
 
-def accuracy(scores, targets, k):
-    """
-    Computes top-k accuracy, from predicted and true labels.
 
-    :param scores: scores from the model
-    :param targets: true labels
-    :param k: k in top-k accuracy
-    :return: top-k accuracy
+def save_checkpoint(epoch, model, optimizer, split_name, filename, best_val_loss=float('inf')):
     """
-    batch_size = targets.size(0)
-    _, ind = scores.topk(k, 1, True, True)
-    correct = ind.eq(targets.view(-1, 1).expand_as(ind))
-    correct_total = correct.view(-1).float().sum()  # 0D tensor
-    return correct_total.item() * (100.0 / batch_size)
-
-
-def save_checkpoint(epoch, model, optimizer):
-    """
-    Save model checkpoint.
+    Save model checkpoint to checkpoints/<split_name>/<filename>.
 
     :param epoch: epoch number
     :param model: model
     :param optimizer: optimizer
+    :param split_name: e.g. 'split_005'
+    :param filename: checkpoint filename, e.g. 'checkpoint_latest.pth.tar'
+    :param best_val_loss: best validation loss seen so far — persisted so resume doesn't reset it
     """
-    state = {'epoch': epoch,
-             'model': model,
-             'optimizer': optimizer}
-    filename = 'checkpoint_ssd300.pth.tar'
-    torch.save(state, filename)
+    folder = os.path.join('checkpoints', split_name)
+    os.makedirs(folder, exist_ok=True)
+    state = {'epoch': epoch, 'model': model, 'optimizer': optimizer, 'best_val_loss': best_val_loss}
+    torch.save(state, os.path.join(folder, filename))
 
 
 class AverageMeter(object):

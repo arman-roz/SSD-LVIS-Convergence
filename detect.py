@@ -1,14 +1,22 @@
+import os
 from torchvision import transforms
 from utils import *
 from PIL import Image, ImageDraw, ImageFont
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Load model checkpoint
-checkpoint = 'checkpoint_ssd300.pth.tar'
-checkpoint = torch.load(checkpoint)
-start_epoch = checkpoint['epoch'] + 1
-print('\nLoaded checkpoint from epoch %d.\n' % start_epoch)
+# ── Split and checkpoint to use for detection ──────────────────────────
+SPLIT = 'split_005'
+EPOCH = None  # None = best checkpoint; set to epoch number for a periodic snapshot
+# ────────────────────────────────────────────────────────────────────────
+
+if EPOCH is None:
+    checkpoint_path = os.path.join('checkpoints', SPLIT, 'checkpoint_best.pth.tar')
+else:
+    checkpoint_path = os.path.join('checkpoints', SPLIT, f'checkpoint_epoch_{EPOCH:04d}.pth.tar')
+
+checkpoint = torch.load(checkpoint_path)
+print('\nLoaded checkpoint from epoch %d.\n' % checkpoint['epoch'])
 model = checkpoint['model']
 model = model.to(device)
 model.eval()
@@ -82,8 +90,9 @@ def detect(original_image, min_score, max_overlap, top_k, suppress=None):
         # draw.rectangle(xy=[l + 3. for l in box_location], outline=label_color_map[
         #     det_labels[i]])  # a fourth rectangle at an offset of 1 pixel to increase line thickness
 
-        # Text
-        text_size = font.getsize(det_labels[i].upper())
+        # Text — use getbbox() instead of getsize() which was removed in Pillow 10+
+        bbox = font.getbbox(det_labels[i].upper())
+        text_size = (bbox[2] - bbox[0], bbox[3] - bbox[1])
         text_location = [box_location[0] + 2., box_location[1] - text_size[1]]
         textbox_location = [box_location[0], box_location[1] - text_size[1], box_location[0] + text_size[0] + 4.,
                             box_location[1]]

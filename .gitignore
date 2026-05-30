@@ -1,0 +1,19 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Checkpoints and training outputs
+checkpoints/
+*.pth.tar
+*.pth
+
+# Logs
+*.csv
+
+# Large files
+*.zip
+
+# IDE
+.vscode/
+.idea/
