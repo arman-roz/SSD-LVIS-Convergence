@@ -17,3 +17,9 @@ checkpoints/
 # IDE
 .vscode/
 .idea/
+
+# Unused files from original repo
+img/
+README_zh.md
+create_data_lists.py
+LICENSE
