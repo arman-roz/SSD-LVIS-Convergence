@@ -83,7 +83,7 @@ class AuxiliaryConvolutions(nn.Module):
         """
         for c in self.children():
             if isinstance(c, nn.Conv2d):
-                nn.init.xavier_uniform_(c.weight)
+                nn.init.kaiming_uniform_(c.weight, nonlinearity='relu')
                 nn.init.constant_(c.bias, 0.)
 
     def forward(self, conv7_feats):
@@ -165,7 +165,7 @@ class PredictionConvolutions(nn.Module):
         """
         for c in self.children():
             if isinstance(c, nn.Conv2d):
-                nn.init.xavier_uniform_(c.weight)
+                nn.init.kaiming_uniform_(c.weight, nonlinearity='relu')
                 nn.init.constant_(c.bias, 0.)
 
     def forward(self, conv4_3_feats, conv7_feats, conv8_2_feats, conv9_2_feats, conv10_2_feats, conv11_2_feats):

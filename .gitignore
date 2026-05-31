@@ -18,6 +18,9 @@ checkpoints/
 .vscode/
 .idea/
 
+# Claude Code
+.claude/
+
 # Unused files from original repo
 img/
 README_zh.md

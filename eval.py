@@ -13,7 +13,7 @@ EPOCH = None         # None = best checkpoint; set to epoch number (e.g. 100) fo
 # ────────────────────────────────────────────────────────────────────────
 
 # Parameters
-val_folder = os.path.join(os.path.dirname(__file__), '..', 'Dataset', SPLIT, 'val')
+val_folder = os.path.join(os.path.dirname(__file__), '..', 'Dataset_1', 'splits', SPLIT, 'val')
 batch_size = 64
 workers = 4
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
