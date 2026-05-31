@@ -94,8 +94,7 @@ def main():
         mode='min',        # we want val loss to go DOWN
         factor=0.1,        # multiply lr by 0.1 on plateau
         patience=LR_PATIENCE,
-        min_lr=1e-6,
-        verbose=True       # prints a message when lr is reduced
+        min_lr=1e-6
     )
     # ──────────────────────────────────────────────────────────────────
 
